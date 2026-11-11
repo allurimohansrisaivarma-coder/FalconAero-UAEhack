@@ -13,13 +13,14 @@ class Notifications:
         self._ids = itertools.count(1)
 
     def raise_(self, key: str, severity: str, category: str, title: str, body: str, t: float,
-               action: dict | None = None) -> dict:
+               action: dict | None = None, impact: dict | None = None) -> dict:
+        """`impact` lists what the notification touches: {flights, arr, dep, runways, stands}."""
         nid = self.by_key.get(key)
         n = self.items.get(nid) if nid else None
         if n is not None and n["status"] != "resolved":
             changed = n["title"] != title or n["severity"] != severity
             escalated = SEV_RANK[severity] > SEV_RANK[n["severity"]]
-            n.update(severity=severity, category=category, title=title, body=body, updated=t, action=action)
+            n.update(severity=severity, category=category, title=title, body=body, updated=t, action=action, impact=impact)
             if changed:
                 n["count"] += 1
             if escalated:
@@ -27,7 +28,8 @@ class Notifications:
             return n
         nid = next(self._ids)
         n = {"id": nid, "key": key, "severity": severity, "category": category, "title": title, "body": body,
-             "t": t, "updated": t, "status": "open", "read": False, "count": 1, "action": action, "resolved_t": None}
+             "t": t, "updated": t, "status": "open", "read": False, "count": 1, "action": action, "impact": impact,
+             "resolved_t": None}
         self.items[nid] = n
         self.by_key[key] = nid
         return n

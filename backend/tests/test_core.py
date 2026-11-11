@@ -219,6 +219,20 @@ def test_nothing_changes_without_approval_when_upkeep_is_off(eng):
     assert "NEW1" in eng.approved
 
 
+def test_a_parked_departure_without_a_plan_still_blocks_its_stand(eng):
+    """A turnaround departure waiting for allocation sits on its stand: an arrival planned there is a clash,
+    not a free stand (otherwise the arrival lands and waits beside an apparently empty stand)."""
+    eng.settings["auto_allocate"] = False
+    stand = eng.approved["ARR0"]["stand"]
+    eng.ingest(evs({"type": "FLIGHT_UPSERT", "callsign": "TURN1", "kind": "DEP", "aircraft": "A320",
+                    "sched": T0 + 200, "stand": stand, "origin_dest": "KWI", "region": "NORTH"}))
+    clash = [c for c in crit(eng) if c["type"] == "stand_overlap" and c["resource"] == stand]
+    assert clash and set(clash[0]["flights"]) == {"TURN1", "ARR0"}
+    res = eng.generate_plans()
+    eng.approve(res["recommended"])
+    assert not [c for c in crit(eng) if c["type"] == "stand_overlap"]
+
+
 FOG = "METAR OMDB 101400Z 00000KT 0150 R12L/0250N FG VV001 21/21 Q1015"
 
 

@@ -11,7 +11,7 @@ export function clock(t: number | null | undefined, withSeconds = false): string
 }
 
 export type Phase =
-  | "INBOUND" | "HOLDING" | "FINAL" | "LANDING" | "TAXI IN" | "WAIT STAND" | "ON BLOCK"
+  | "INBOUND" | "HOLDING" | "APPROACH" | "FINAL" | "LANDING" | "TAXI IN" | "WAIT STAND" | "ON BLOCK"
   | "ON STAND" | "TAXI OUT" | "LINE UP" | "AIRBORNE" | "DEPARTED" | "DIVERTED" | "CANCELLED" | "TURNED";
 
 export interface AcPos { x: number; y: number; hdg: number; phase: Phase; moving: boolean; visible: boolean }
@@ -48,7 +48,7 @@ function standHeading(layout: Layout, standId: string | null): number {
 const hidden = (phase: Phase): AcPos => ({ x: 0, y: 0, hdg: 0, phase, moving: false, visible: false });
 
 /** Aircraft position at time T from the plan row + actual milestones (status). */
-export function position(row: PlanRow, T: number, layout: Layout, aldt?: number | null, aobt?: number | null, atot?: number | null): AcPos {
+export function position(row: PlanRow, T: number, layout: Layout, aldt?: number | null, aobt?: number | null, atot?: number | null, actStand?: string | null): AcPos {
   if (row.status === "CANCELLED") return hidden("CANCELLED");
   if (row.diverted || row.status === "DIVERTED") return hidden("DIVERTED");
   if (row.status === "TURNED") return hidden("TURNED");
@@ -57,9 +57,10 @@ export function position(row: PlanRow, T: number, layout: Layout, aldt?: number 
 
   if (row.kind === "ARR") {
     if (row.status === "ONBLOCK") {
-      const last = row.path[row.path.length - 1];
-      if (!last) return hidden("ON BLOCK");
-      return { x: last[0], y: last[1], hdg: standHeading(layout, row.stand), phase: "ON BLOCK", moving: false, visible: true };
+      // Draw it where it actually parked: the reported stand wins over the planned one
+      const s = layout.stands.find((x) => x.id === (actStand ?? row.stand));
+      if (!s) return hidden("ON BLOCK");
+      return { x: s.x, y: s.y, hdg: standHeading(layout, s.id), phase: "ON BLOCK", moving: false, visible: true };
     }
     if (row.status === "LANDED" && rwy) {
       const t0 = aldt ?? row.t;
@@ -118,7 +119,14 @@ export function position(row: PlanRow, T: number, layout: Layout, aldt?: number 
   return hidden("TAXI OUT");
 }
 
-function holdPos(row: PlanRow, T: number, hf: { x: number; y: number }): AcPos {
+/** Parked at a stand (a departure that has no plan yet still physically sits there). */
+export function atStand(layout: Layout, standId: string | null, phase: Phase = "ON STAND"): AcPos {
+  const s = layout.stands.find((x) => x.id === standId);
+  if (!s) return hidden(phase);
+  return { x: s.x, y: s.y, hdg: standHeading(layout, s.id), phase, moving: false, visible: true };
+}
+
+export function holdPos(row: { callsign: string }, T: number, hf: { x: number; y: number }): AcPos {
   let seed = 0;
   for (const ch of row.callsign) seed = (seed * 31 + ch.charCodeAt(0)) % 997;
   const ang = (T / 3) * Math.PI * 2 + seed;

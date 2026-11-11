@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
-import type { Notification, Snapshot } from "../types";
+import type { Impact, Notification, Snapshot } from "../types";
 import { clock } from "../sim";
 
 interface Props {
@@ -55,10 +55,7 @@ export function NotificationsView({ snap, onAction }: Props) {
       </div>
       <section className="notif-main">
         <div className="notif-h">
-          <div>
-            <h2>Notifications</h2>
-            <p className="dim">The engine raises, updates and auto-resolves these from live events, forecasts and plan checks.</p>
-          </div>
+          <h2>Notifications</h2>
           <span className="spacer" />
           <button className="btn sm" onClick={() => api.ackAll().then(() => setItems((xs) => xs.map((x) => ({ ...x, read: true, status: x.status === "open" ? "ack" : x.status }))))}>Acknowledge all</button>
         </div>
@@ -79,20 +76,19 @@ export function NotificationsView({ snap, onAction }: Props) {
                 <div className="nt">
                   {!n.read && n.status !== "resolved" && <span className="unread-dot" />}
                   <span className="title">{n.title}</span>
-                  {n.count > 1 && <span className="tag">×{n.count}</span>}
+                  {n.count > 1 && <span className="tag" title="Times this has changed since it was raised">×{n.count}</span>}
+                  <span className="spacer" />
+                  <span className="mono dim3 ntime" title={`Raised ${clock(n.t)}Z`}>
+                    {n.status === "resolved" ? `cleared ${clock(n.resolved_t)}Z` : n.updated !== n.t ? `${clock(n.t)}Z · upd ${clock(n.updated)}Z` : `${clock(n.t)}Z`}
+                  </span>
                 </div>
-                <div className="nb">{n.body}</div>
-                <div className="nm mono">
-                  <span>{n.severity.toUpperCase()}</span><span>{CAT_LABEL[n.category] ?? n.category}</span>
-                  <span>raised {clock(n.t)}Z</span>{n.updated !== n.t && <span>updated {clock(n.updated)}Z</span>}
-                  {n.status === "resolved" && <span style={{ color: "var(--ok)" }}>resolved {clock(n.resolved_t)}Z · {n.resolution}</span>}
-                  {n.status === "ack" && <span>acknowledged</span>}
-                </div>
+                <div className="nb" title={n.body}>{n.status === "resolved" ? n.resolution : n.body}</div>
+                {n.impact && n.status !== "resolved" && <ImpactChips impact={n.impact} onFlight={(cs) => onAction({ ...n, action: { type: "focus_flight", ref: cs } })} />}
               </div>
               <div className="nact">
                 {n.action && n.status !== "resolved" && (
                   <button className="btn sm ai" onClick={() => { ack(n); onAction(n); }}>
-                    {n.action.type === "review_plan" ? "Review plan" : n.action.type === "focus_flight" ? `Show ${n.action.ref}` : n.action.type === "forecast" ? "Open forecast" : "Open"}
+                    {n.action.type === "review_plan" ? "Review plan" : n.action.type === "focus_flight" ? `Show ${n.action.ref}` : n.action.type === "forecast" ? "Forecast" : "Open"}
                   </button>
                 )}
                 {n.status === "open" && <button className="btn sm ghost" onClick={() => ack(n)}>Acknowledge</button>}
@@ -102,5 +98,29 @@ export function NotificationsView({ snap, onAction }: Props) {
         </div>
       </section>
     </main>
+  );
+}
+
+/** What the notification touches, in one line; the flight count opens the callsigns, each one jumps to the flight. */
+function ImpactChips({ impact, onFlight }: { impact: Impact; onFlight: (cs: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const n = impact.flights.length;
+  if (!n && !impact.runways.length && !impact.stands.length) return null;
+  const split = [impact.arr && `${impact.arr} arr`, impact.dep && `${impact.dep} dep`].filter(Boolean).join(" / ");
+  return (
+    <div className="chips">
+      {n > 0 && (
+        <button className={`chip ${open ? "on" : ""}`} onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+          ✈ {n} flight{n !== 1 ? "s" : ""}{split && <span className="dim3"> ({split})</span>}
+        </button>
+      )}
+      {impact.runways.length > 0 && <span className="chip">RWY {impact.runways.join(", ")}</span>}
+      {impact.stands.length > 0 && <span className="chip">STD {impact.stands.slice(0, 6).join(", ")}{impact.stands.length > 6 ? ` +${impact.stands.length - 6}` : ""}</span>}
+      {open && (
+        <div className="chip-list">
+          {impact.flights.map((cs) => <button key={cs} className="chip cs" onClick={() => onFlight(cs)}>{cs}</button>)}
+        </div>
+      )}
+    </div>
   );
 }

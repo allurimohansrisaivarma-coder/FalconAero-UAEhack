@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "./api";
 import { useLive } from "./live";
-import { position } from "./sim";
+import { runwayGeo } from "./airspace";
+import { buildTraffic, type Ac } from "./traffic";
 import type { Layout, Notification, PlansResponse } from "./types";
 import { TopBar, type Tab } from "./components/TopBar";
 import { FlightStrips } from "./components/FlightStrips";
@@ -59,7 +60,12 @@ export default function App() {
     setPlans(null); setCompare(false);
     notify(`${opt?.label ?? "Plan"} approved · ${opt?.changes.length ?? 0} flights updated`);
   });
-  const reject = () => run(async () => { await api.reject(); setPlans(null); setCompare(false); notify("Recovery plan rejected · approved plan kept"); });
+  const ignore = () => run(async () => {
+    // Nothing pending on the engine side any more (withdrawn or already handled): just close
+    if (snap?.options) await api.reject();
+    setPlans(null); setCompare(false);
+    notify("Warning ignored · approved plan kept · offered again in 15 min if it persists");
+  });
   const undo = () => run(async () => { await api.undo(); notify("Previous plan restored"); });
 
   // Keep an open review in sync: if the engine produced a newer plan set, refresh it
@@ -68,6 +74,21 @@ export default function App() {
       api.latestPlans().then((p) => { if ("options" in p && p.options) { setPlans(p as PlansResponse); setPick((p as PlansResponse).recommended ?? ""); } }).catch(() => undefined);
     }
   }, [snap?.options?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // A fresh set of options for a pending decision pops the review up on its own, once per set
+  const [offered, setOffered] = useState<number | null>(null);
+  useEffect(() => {
+    const o = snap?.options;
+    if (!plans && !busy && snap?.decision && o && !o.stale && o.id !== offered) { setOffered(o.id); openReview(); }
+  }, [snap?.options?.id, snap?.options?.stale, snap?.decision]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // The engine withdrew the proposal (the issue settled itself): nothing is left to decide
+  useEffect(() => {
+    if (plans && !busy && snap && !snap.options && !snap.decision && !snap.planning) {
+      setPlans(null); setCompare(false);
+      notify("Situation cleared · recovery plan no longer needed");
+    }
+  }, [snap?.options, snap?.decision, snap?.planning]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const onAction = (n: Notification) => {
     const a = n.action;
@@ -82,9 +103,11 @@ export default function App() {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
-      if (e.key === "Escape") { if (compare) setCompare(false); else if (plans) setPlans(null); else setSelected(null); return; }
+      // Escape never dismisses a pending decision: only Approve or Ignore close it
+      if (e.key === "Escape") { if (compare) setCompare(false); else if (!plans) setSelected(null); return; }
       if (e.key.toLowerCase() === "m") { setMapView((v) => (v === "airspace" ? "surface" : "airspace")); return; }
       if (plans) {
+        if (e.key.toLowerCase() === "i" && !busy) ignore();
         const idx = Number(e.key) - 1;
         if (idx >= 0 && idx < plans.options.length) setPick(plans.options[idx].id);
         // Same guard as the Approve button: never approve a stale plan or one with critical issues from the keyboard
@@ -100,16 +123,13 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   });
 
+  const geos = useMemo(() => (layout ? runwayGeo(layout) : []), [layout]);
+  const traffic = useMemo(() => (snap && layout ? buildTraffic(snap, layout, T, geos) : new Map<string, Ac>()), [snap, layout, T, geos]);
   const standsInUse = useMemo(() => {
-    if (!snap || !layout) return 0;
     let n = 0;
-    for (const r of Object.values(snap.plan)) {
-      const f = snap.flights[r.callsign];
-      const p = position(r, T, layout, f?.aldt, f?.aobt, f?.atot);
-      if (p.visible && !p.moving && (p.phase === "ON BLOCK" || p.phase === "ON STAND")) n++;
-    }
+    for (const ac of traffic.values()) if (ac.where === "GROUND" && (ac.phase === "ON BLOCK" || ac.phase === "ON STAND")) n++;
     return n;
-  }, [snap, layout, T]);
+  }, [traffic]);
 
   if (!layout || !snap) {
     return <div className="boot"><div className="mono">{toast?.err ? toast.text : "Connecting to FalconAero engine…"}</div></div>;
@@ -127,10 +147,10 @@ export default function App() {
       <TopBar snap={snap} sim={sim} T={T} tab={tab} onTab={setTab} connected={connected} standsInUse={standsInUse} />
       {tab === "ops" ? (
         <>
-          <FlightStrips snap={snap} layout={layout} T={T} selected={selected} onSelect={setSelected} />
+          <FlightStrips snap={snap} traffic={traffic} selected={selected} onSelect={setSelected} />
           {mapView === "airspace"
-            ? <AirspaceMap layout={layout} snap={snap} T={T} selected={selected} onSelect={setSelected} proposal={proposal} toolbar={mapSwitch} />
-            : <AirfieldMap layout={layout} snap={snap} T={T} selected={selected} onSelect={setSelected} proposal={proposal} toolbar={mapSwitch} />}
+            ? <AirspaceMap layout={layout} snap={snap} traffic={traffic} geos={geos} T={T} selected={selected} onSelect={setSelected} proposal={proposal} toolbar={mapSwitch} />
+            : <AirfieldMap layout={layout} snap={snap} traffic={traffic} T={T} selected={selected} onSelect={setSelected} proposal={proposal} toolbar={mapSwitch} />}
           <Timeline layout={layout} snap={snap} T={T} selected={selected} onSelect={setSelected} proposal={proposal} view={tlView} onView={setTlView} />
           <AlertsPanel snap={snap} busy={busy} onReview={openReview} onGenerate={regenerate} onUndo={undo} onSelect={setSelected} notify={notify} />
         </>
@@ -139,8 +159,8 @@ export default function App() {
       )}
 
       {plans && (
-        <PlanReview plans={plans} stale={snap.options?.id === plans.id && (snap.options.stale || !snap.options.valid.includes(pick))} pick={pick} onPick={setPick} onApprove={approve}
-          onCompare={() => setCompare(true)} onClose={() => setPlans(null)} onReject={reject} onRegenerate={regenerate} busy={busy || snap.planning} onSelectFlight={setSelected} />
+        <PlanReview plans={plans} decision={snap.decision} stale={snap.options?.id === plans.id && (snap.options.stale || !snap.options.valid.includes(pick))} pick={pick} onPick={setPick}
+          onApprove={approve} onIgnore={ignore} onCompare={() => setCompare(true)} onRegenerate={regenerate} busy={busy} planning={snap.planning} onSelectFlight={setSelected} />
       )}
       {plans && compare && <CompareView plans={plans} pick={pick} onClose={() => setCompare(false)} />}
 

@@ -152,8 +152,18 @@ const seedOf = (cs: string) => { let s = 0; for (const ch of cs) s = (s * 31 + c
  * `queue` is the aircraft's place among arrivals whose planned landing time has passed without a landing:
  * they are strung out along final, three miles apart, instead of all sitting on the threshold.
  */
+/** An arrival with no landing slot yet: in the holding pattern on its entry radial once it is due. */
+export function holdTrack(cs: string, region: string | null, earliest: number, T: number): Track | null {
+  if (T < earliest - 6) return null;
+  const e = ENTRY[regionOf(region)];
+  const hold = pol(e.brg, HOLD_NM);
+  const { p, trk } = racetrack(hold, (e.brg + 180) % 360, T - earliest, seedOf(cs));
+  return { cs, kind: "ARR", p, trk, phase: "HOLD", alt: 13000, gs: 210, vs: 0, path: [p], dtg: HOLD_NM };
+}
+
 export function track(row: PlanRow, f: Flight | undefined, T: number, layout: Layout, ops: Ops, geos: RunwayGeo[], queue = 0): Track | null {
-  if (row.diverted || !row.runway || row.status === "CANCELLED" || row.status === "DIVERTED" || row.status === "TURNED") return null;
+  if (row.diverted || row.status === "CANCELLED" || row.status === "DIVERTED" || row.status === "TURNED") return null;
+  if (!row.runway) return row.kind === "ARR" && f?.aldt == null ? holdTrack(row.callsign, row.region, row.earliest, T) : null;
   const geo = geos.find((g) => g.id === row.runway);
   if (!geo) return null;
   const hdg = headingInUse(layout, ops, row.runway);

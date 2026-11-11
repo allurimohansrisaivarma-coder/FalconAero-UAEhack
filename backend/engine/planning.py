@@ -275,6 +275,12 @@ def validate(rows: dict, ctx: Ctx) -> list[dict]:
             if f.kind == "DEP" and f.aobt is None and r["t"] < f.earliest:
                 r = {**r, "stand_to": f.earliest - r["taxi_min"] + ctx.airport.buffer}
             by_stand.setdefault(r["stand"], []).append(r)
+    # A departure parked on its stand without a plan yet (a fresh turnaround while a decision is pending)
+    # still physically blocks it: an arrival planned onto that stand cannot get on block.
+    for cs, f in ctx.flights.items():
+        if f.kind == "DEP" and f.active and f.stand and f.aobt is None and cs not in rows:
+            by_stand.setdefault(f.stand, []).append({"callsign": cs, "stand_from": now - FAR_PAST_OFFSET,
+                                                     "stand_to": max(f.earliest, now) + ctx.airport.buffer})
     for stand, rs in by_stand.items():
         rs.sort(key=lambda r: r["stand_from"])
         for i, a in enumerate(rs):

@@ -2,14 +2,17 @@ import { memo, useMemo, type ReactNode } from "react";
 import type { Layout, Ops, PlanOption, Snapshot } from "../types";
 import { clock } from "../sim";
 import {
-  NEIGHBOURS, RANGE_NM, REGIONS, arrivalRoute, departureRoute, fixes, headingInUse, path, pol, runwayGeo, track,
+  NEIGHBOURS, RANGE_NM, REGIONS, arrivalRoute, departureRoute, fixes, headingInUse, path, pol, track,
   type P, type RunwayGeo, type Track,
 } from "../airspace";
 import { MapStatus } from "./AirfieldMap";
+import type { Ac } from "../traffic";
 
 interface Props {
   layout: Layout;
   snap: Snapshot;
+  traffic: Map<string, Ac>;
+  geos: RunwayGeo[];
   T: number;
   selected: string | null;
   onSelect: (cs: string | null) => void;
@@ -26,35 +29,29 @@ const SLOTS: P[] = [[2.4, -4.4], [2.4, 1.2], [-LABEL_W - 2.4, -4.4], [-LABEL_W -
 const fl = (ft: number) => String(Math.round(ft / 100)).padStart(3, "0");
 const TREND = { [-1]: "↓", 0: "=", 1: "↑" } as const;
 
-export function AirspaceMap({ layout, snap, T, selected, onSelect, proposal, toolbar }: Props) {
-  const geos = useMemo(() => runwayGeo(layout), [layout]);
+export function AirspaceMap({ layout, snap, traffic, geos, T, selected, onSelect, proposal, toolbar }: Props) {
   const ops = snap.ops;
   const conflicted = useMemo(() => new Set(snap.conflicts.filter((c) => c.type !== "unplanned" && c.severity === "critical").flatMap((c) => c.flights)), [snap.conflicts]);
 
   const tracks = useMemo(() => {
-    const out: (Track & { trail: P[] })[] = [];
-    const rows = Object.values(snap.plan);
-    // Arrivals past their planned landing time that have not landed, in landing order per runway
-    const late = rows.filter((r) => r.kind === "ARR" && r.runway && !r.diverted && r.t < T && snap.flights[r.callsign]?.aldt == null).sort((a, b) => a.t - b.t);
-    const place = new Map(late.map((r) => [r.callsign, late.filter((x) => x.runway === r.runway).indexOf(r)]));
-    for (const row of rows) {
-      const f = snap.flights[row.callsign];
-      const q = place.get(row.callsign) ?? 0;
-      const t = track(row, f, T, layout, ops, geos, q);
-      if (!t) continue;
+    const out: (Track & { trail: P[]; ac: Ac })[] = [];
+    for (const ac of traffic.values()) {
+      if (!ac.air) continue;
       const trail: P[] = [];
-      if (!place.has(row.callsign)) for (let k = 1; k <= 5; k++) { const h = track(row, f, T - k * 0.45, layout, ops, geos); if (h) trail.push(h.p); }
-      out.push({ ...t, trail });
+      // No trail for overdue arrivals strung out on final: their past positions are not on this track
+      const overdue = ac.row?.kind === "ARR" && ac.row.t < T;
+      if (ac.row && !overdue) for (let k = 1; k <= 5; k++) { const h = track(ac.row, ac.f, T - k * 0.45, layout, ops, geos); if (h) trail.push(h.p); }
+      out.push({ ...ac.air, trail, ac });
     }
     return out;
-  }, [snap.plan, snap.flights, T, layout, ops, geos]);
+  }, [traffic, T, layout, ops, geos]);
 
-  // Landing sequence, as an arrival manager would number it
+  // Landing sequence, as an arrival manager would number it; arrivals with no slot get no number
   const seq = useMemo(() => {
     const m = new Map<string, number>();
-    tracks.filter((t) => t.kind === "ARR").sort((a, b) => snap.plan[a.cs].t - snap.plan[b.cs].t).forEach((t, i) => m.set(t.cs, i + 1));
+    tracks.filter((t) => t.kind === "ARR" && t.ac.row?.runway).sort((a, b) => a.ac.row!.t - b.ac.row!.t).forEach((t, i) => m.set(t.cs, i + 1));
     return m;
-  }, [tracks, snap.plan]);
+  }, [tracks]);
 
   // Greedy label placement: nearest-to-landing first, each block takes the first free slot
   const labels = useMemo(() => {
@@ -82,7 +79,7 @@ export function AirspaceMap({ layout, snap, T, selected, onSelect, proposal, too
       .filter((g): g is typeof g & { t: Track } => g.t !== null);
   }, [proposal, snap.flights, T, layout, ops, geos]);
 
-  const holding = (region: string) => tracks.filter((t) => t.phase === "HOLD" && (snap.plan[t.cs].region ?? "EAST") === region).length;
+  const holding = (region: string) => tracks.filter((t) => t.phase === "HOLD" && (t.ac.f.region ?? "EAST") === region).length;
   const fog = ops.lvp || ops.weather.vis_m < 1500;
   const closedRegions = ops.closed_regions.includes("ALL") ? [...REGIONS] : REGIONS.filter((r) => ops.closed_regions.includes(r));
 
@@ -129,9 +126,10 @@ export function AirspaceMap({ layout, snap, T, selected, onSelect, proposal, too
         ))}
 
         {tracks.map((t) => {
-          const row = snap.plan[t.cs];
+          const { row, f } = t.ac;
+          const added = row?.added ?? 0;
           const sel = selected === t.cs;
-          const emerg = row.priority === "emergency";
+          const emerg = f.priority === "emergency";
           const c = colour(t, emerg);
           const [dx, dy] = labels.get(t.cs) ?? SLOTS[0];
           const lx = t.p[0] + dx, ly = t.p[1] + dy;
@@ -140,7 +138,7 @@ export function AirspaceMap({ layout, snap, T, selected, onSelect, proposal, too
           const ghost = ghosts.find((g) => g.cs === t.cs);
           return (
             <g key={t.cs} className={`tma-ac ${sel ? "sel" : ""}`} onClick={(e) => { e.stopPropagation(); onSelect(sel ? null : t.cs); }}>
-              <title>{`${t.cs} ${row.type} · ${t.kind === "ARR" ? `landing ${row.runway} ${clock(row.t)}Z, ${t.dtg.toFixed(0)} NM to run` : `departed ${row.runway} to ${row.origin_dest}`} · ${t.phase}${row.added > 0 ? ` · +${row.added} min` : ""}`}</title>
+              <title>{`${t.cs} ${f.aircraft} · ${!row?.runway ? "awaiting a landing slot" : t.kind === "ARR" ? `landing ${row.runway} ${clock(row.t)}Z, ${t.dtg.toFixed(0)} NM to run` : `departed ${row.runway} to ${row.origin_dest}`} · ${t.phase}${added > 0 ? ` · +${added} min` : ""}`}</title>
               {/* Route still to fly, in the colour of the movement: quiet until the aircraft is hovered or selected */}
               <path className="tma-path" d={path(t.path)} fill="none" stroke={sel ? "var(--sel)" : c} strokeLinejoin="round" pointerEvents="none" />
               {t.trail.map((q, i) => <circle key={i} cx={q[0]} cy={q[1]} r={0.22} fill={c} opacity={0.55 - i * 0.09} />)}
@@ -155,11 +153,11 @@ export function AirspaceMap({ layout, snap, T, selected, onSelect, proposal, too
                 {t.kind === "ARR" && seq.has(t.cs) && <tspan className="dim" dx={0.7}>#{seq.get(t.cs)}</tspan>}
                 <tspan x={lx} dy={1.7}>{fl(t.alt)}{TREND[t.vs]} {Math.round(t.gs / 10)}</tspan>
                 {t.phase === "HOLD" && <tspan className="warn" dx={0.6}>HOLD</tspan>}
-                {row.added > 0 && <tspan className="warn" dx={0.6}>+{row.added}</tspan>}
+                {added > 0 && <tspan className="warn" dx={0.6}>+{added}</tspan>}
                 {ghost && <tspan className="ai" dx={0.6}>→{clock(ghost.row.t)}</tspan>}
                 {/* Third line only for the aircraft under the pointer or selected */}
                 <tspan x={lx} dy={1.7} className="dim more">
-                  {row.type} {ops.runways[row.runway ?? ""]?.direction || row.runway}{t.kind === "ARR" ? ` ${clock(row.t)}` : ` ${row.origin_dest}`}
+                  {f.aircraft} {!row?.runway ? "NO SLOT" : `${ops.runways[row.runway]?.direction || row.runway}${t.kind === "ARR" ? ` ${clock(row.t)}` : ` ${row.origin_dest}`}`}
                 </tspan>
               </text>
             </g>

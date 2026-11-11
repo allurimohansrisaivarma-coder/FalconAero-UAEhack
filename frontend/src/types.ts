@@ -77,10 +77,13 @@ export interface ForecastBin {
 export interface ForecastAlert { key: string; severity: Sev; category: string; title: string; body: string; t: number }
 export interface Forecast { bins: ForecastBin[]; alerts: ForecastAlert[] }
 
+/** What a notification or a decision touches. */
+export interface Impact { flights: string[]; arr: number; dep: number; runways: string[]; stands: string[] }
+
 export interface Notification {
   id: number; key: string; severity: Sev; category: string; title: string; body: string; t: number; updated: number;
   status: "open" | "ack" | "resolved"; read: boolean; count: number; action: { type: string; ref?: string } | null;
-  resolved_t: number | null; resolution?: string;
+  resolved_t: number | null; resolution?: string; impact?: Impact | null;
 }
 
 export interface LogEntry { t: number; source: string; kind: string; text: string }
@@ -112,7 +115,7 @@ export interface PlanOption {
 }
 
 export interface PlansResponse {
-  id: number; t: number; auto: boolean; situation: string; stale?: boolean;
+  id: number; t: number; auto: boolean; situation: string; stale?: boolean; impact?: Impact;
   current: { kpis: Kpis; conflicts: Conflict[] };
   baseline: { kpis: Kpis; conflicts: Conflict[]; plan: Plan; changes: Change[] };
   options: PlanOption[]; recommended: string | null; frozen: string[]; assumptions: string[];

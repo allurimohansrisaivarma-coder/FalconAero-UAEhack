@@ -69,6 +69,32 @@ def _forecast_risk(ctx, risk_ctx) -> dict | None:
     return None
 
 
+def _impact(ctx, flights=(), runways=(), stands=()) -> dict:
+    """What a notification or a decision touches, as counts the controller can take in at a glance."""
+    fl = sorted({cs for cs in flights if cs in ctx.flights})
+    return {"flights": fl, "arr": sum(1 for cs in fl if ctx.flights[cs].kind == "ARR"),
+            "dep": sum(1 for cs in fl if ctx.flights[cs].kind == "DEP"),
+            "runways": sorted(set(runways)), "stands": sorted(set(stands))}
+
+
+def _upcoming(ctx, rows: dict, a: float | None = None, b: float | None = None) -> list[dict]:
+    """Planned movements still to happen, optionally only those whose runway time falls in [a, b)."""
+    lo = ctx.now if a is None else a
+    return [r for cs, r in rows.items() if r["runway"] and not r["diverted"] and cs in ctx.flights
+            and ctx.flights[cs].active and r["t"] >= lo and (b is None or r["t"] < b)]
+
+
+def situation_impact(ctx, rows: dict, conf: list[dict]) -> dict:
+    """Everything the current situation touches: flights in an open issue, runways that are closed or
+    flagged, stands that are unavailable or flagged."""
+    ap = ctx.airport
+    runways = {c["resource"] for c in conf if c["resource"] in ap.runway}
+    runways |= {rid for rid, ro in ctx.ops(ctx.now).runways.items() if not ro.open}
+    stands = {c["resource"] for c in conf if c["resource"] in ap.stand}
+    stands |= {sid for sid, blocks in ctx.stand_blocks.items() if any(a <= ctx.now < b for a, b, _ in blocks)}
+    return _impact(ctx, [cs for c in conf for cs in c["flights"]], runways, stands)
+
+
 class Engine:
     def __init__(self, airport: str = "omdb") -> None:
         self.airport = Airport.load(airport)
@@ -212,14 +238,17 @@ class Engine:
 
     def _notify(self, ctx, conf: list[dict], fc: dict) -> None:
         n, t, st = self.notes, self.state.now, self.state
+        rows = self.last.get("rows", {}) if self.last else {}
+        up = _upcoming(ctx, rows)
         # Conflicts
         relevant = [c for c in conf if c["type"] != "unplanned" or c["severity"] == "critical"]
         if relevant:
             crit = sum(1 for c in relevant if c["severity"] == "critical")
+            first = next((c for c in relevant if c["severity"] == "critical"), relevant[0])
             n.raise_("conflicts", "critical" if crit else "warning", "conflict",
-                     f"{len(relevant)} issue{'s' if len(relevant) != 1 else ''} in the approved plan" + (f" ({crit} critical)" if crit else ""),
-                     " · ".join(c["message"] for c in relevant[:3]) + (" …" if len(relevant) > 3 else ""), t,
-                     {"type": "review_plan"})
+                     f"{len(relevant)} plan issue{'s' if len(relevant) != 1 else ''}" + (f", {crit} critical" if crit else ""),
+                     first["message"] + (f" (+{len(relevant) - 1} more)" if len(relevant) > 1 else ""), t,
+                     {"type": "review_plan"}, situation_impact(ctx, rows, relevant))
         else:
             n.resolve("conflicts", t, "Approved plan conflict-free")
         # Forecast
@@ -232,12 +261,16 @@ class Engine:
         o = ctx.ops(ctx.now)
         keys = set()
         w = o.weather
+        next_hour = [r["callsign"] for r in _upcoming(ctx, rows, None, ctx.now + 60)]
         if o.lvp:
-            n.raise_("wx:lvp", "warning", "weather", f"Low-visibility procedures in force (CAT {o.required_ils})",
-                     f"{w.raw} · Arrival capacity reduced; taxi speeds reduced.", t)
+            vis = w.rvr_m if w.rvr_m is not None else w.vis_m
+            n.raise_("wx:lvp", "warning", "weather", f"Low visibility: LVP CAT {o.required_ils}",
+                     f"RVR/vis {vis} m. Reduced arrival rate and slower taxi for the next hour's movements.", t,
+                     impact=_impact(ctx, next_hour, [rid for rid, ro in o.runways.items() if ro.reasons]))
             keys.add("wx:lvp")
         elif o.category == "IMC":
-            n.raise_("wx:imc", "info", "weather", "Instrument meteorological conditions", w.raw, t)
+            n.raise_("wx:imc", "info", "weather", "Instrument conditions (IMC)", w.raw, t,
+                     impact=_impact(ctx, next_hour))
             keys.add("wx:imc")
         for adv in o.advisories:
             k = "wx:adv:" + _h(adv[:40])
@@ -249,42 +282,65 @@ class Engine:
 
         def until(r):
             return f" until {clock(r.until)}" if r.until else " (no end time)"
+        def on_rwy(rid):
+            return [r["callsign"] for r in up if r["runway"] == rid]
+
+        def on_stand(sid):
+            return [cs for cs, r in rows.items() if r["stand"] == sid and r["stand_to"] is not None and r["stand_to"] > ctx.now
+                    and cs in ctx.flights and ctx.flights[cs].active]
+
         for rid, r in st.runways.items():
             k = f"res:rwy:{rid}"
             n.raise_(k, "critical" if r.status == "CLOSED" else "warning", "resource",
                      f"Runway {rid} {r.status.lower()}" + (f", ILS CAT {r.extra['ils_cat']}" if r.extra.get("ils_cat") else ""),
-                     (r.reason or "No reason given") + until(r), t)
+                     (r.reason or "No reason given") + until(r), t, impact=_impact(ctx, on_rwy(rid), [rid]))
             keys.add(k)
         for rid, ro in o.runways.items():
             if not ro.open and rid not in st.runways:
                 k = f"res:rwy:{rid}:wx"
-                n.raise_(k, "critical", "resource", f"Runway {rid} unusable", "; ".join(ro.reasons), t)
+                n.raise_(k, "critical", "resource", f"Runway {rid} unusable", "; ".join(ro.reasons), t,
+                         impact=_impact(ctx, on_rwy(rid), [rid]))
                 keys.add(k)
         for sid, r in st.stands.items():
             k = f"res:stand:{sid}"
-            n.raise_(k, "warning", "resource", f"Stand {sid} unavailable", (r.reason or "") + until(r), t)
+            n.raise_(k, "warning", "resource", f"Stand {sid} unavailable", (r.reason or "") + until(r), t,
+                     impact=_impact(ctx, on_stand(sid), stands=[sid]))
             keys.add(k)
+        route_hit = [cs for c in conf if c["type"] == "route" for cs in c["flights"]]
         for tw, r in st.taxiways.items():
             k = f"res:twy:{tw}"
-            n.raise_(k, "warning", "resource", f"Taxiway {tw} closed", (r.reason or "") + until(r), t)
+            n.raise_(k, "warning", "resource", f"Taxiway {tw} closed", (r.reason or "") + until(r), t,
+                     impact=_impact(ctx, route_hit))
             keys.add(k)
         if st.lightning.status != "CLEAR":
+            a, b = ctx.ramp_block or (ctx.now, ctx.now + 30)
+            ramp_hit = []
+            for cs, r in rows.items():
+                p = r["onblock"] if r["kind"] == "ARR" else r["offblock"]     # the moment the ramp is needed
+                if cs in ctx.flights and ctx.flights[cs].active and p is not None and a <= p < b:
+                    ramp_hit.append(cs)
             n.raise_("res:lightning", "critical" if st.lightning.status == "RED" else "warning", "resource",
-                     f"Lightning {st.lightning.status}" + (": ramp operations suspended" if st.lightning.status == "RED" else ": prepare to suspend ramp"),
-                     (st.lightning.reason or "Thunderstorm in vicinity") + until(st.lightning), t)
+                     f"Lightning {st.lightning.status}" + (": ramp suspended" if st.lightning.status == "RED" else ": ramp may stop"),
+                     (st.lightning.reason or "Thunderstorm in vicinity") + until(st.lightning), t,
+                     impact=_impact(ctx, ramp_hit, stands={rows[cs]["stand"] for cs in ramp_hit if rows[cs]["stand"]}))
             keys.add("res:lightning")
         if st.ground_stop.status == "ACTIVE":
-            n.raise_("res:gs", "critical", "resource", "Ground stop in force",
-                     (st.ground_stop.reason or "") + until(st.ground_stop), t)
+            a, b, scope = ctx.ground_stop or (ctx.now, ctx.now + 45, "DEP")
+            gs_hit = [r["callsign"] for r in _upcoming(ctx, rows, a, b) if scope == "ALL" or r["kind"] == "DEP"]
+            n.raise_("res:gs", "critical", "resource", "Ground stop" + (" · all movements" if scope == "ALL" else " · departures"),
+                     (st.ground_stop.reason or "") + until(st.ground_stop), t, impact=_impact(ctx, gs_hit))
             keys.add("res:gs")
         for kk, r in st.flow.items():
-            n.raise_(f"res:flow:{kk}", "warning", "resource", f"ATFM: {kk} capped at {r.extra['max_per_hour']}/h",
-                     (r.reason or "Flow regulation") + until(r), t)
+            cap, a, b = ctx.flow.get(kk, (r.extra["max_per_hour"], ctx.now, ctx.now + 60))
+            flow_hit = [x["callsign"] for x in _upcoming(ctx, rows, a, b) if x["kind"] == kk]
+            n.raise_(f"res:flow:{kk}", "warning", "resource", f"ATFM: {kk} capped at {cap}/h",
+                     (r.reason or "Flow regulation") + until(r), t, impact=_impact(ctx, flow_hit))
             keys.add(f"res:flow:{kk}")
         if st.airspace.status == "CLOSED":
-            n.raise_("res:airspace", "critical", "resource",
-                     f"Airspace closed via {', '.join(st.airspace.extra.get('regions', []))}",
-                     (st.airspace.reason or "") + until(st.airspace), t)
+            regions = st.airspace.extra.get("regions", [])
+            air_hit = [r["callsign"] for r in up if "ALL" in regions or (r["region"] or "").upper() in regions]
+            n.raise_("res:airspace", "critical", "resource", f"Airspace closed: {', '.join(regions)}",
+                     (st.airspace.reason or "") + until(st.airspace), t, impact=_impact(ctx, air_hit))
             keys.add("res:airspace")
         n.sync("res:", keys, t)
         # Flights
@@ -294,11 +350,15 @@ class Engine:
                 continue
             if f.priority in ("emergency", "high"):
                 k = f"flt:prio:{f.callsign}"
-                row = self.last.get("rows", {}).get(f.callsign) if self.last else None
-                when = f" · planned {clock(row['t'])} {row['runway']} stand {row['stand']}" if row and row.get("runway") else " · not yet planned"
+                row = rows.get(f.callsign)
+                planned = bool(row and row.get("runway"))
+                when = (f"{'Lands' if f.kind == 'ARR' else 'Departs'} {clock(row['t'])}Z on {row['runway']}"
+                        + (f", stand {row['stand']}" if row["stand"] else "") if planned else "Not yet planned")
                 n.raise_(k, "critical" if f.priority == "emergency" else "warning", "flight",
-                         f"{f.callsign} {'EMERGENCY' if f.priority == 'emergency' else 'priority'} ({f.kind} {f.aircraft})",
-                         f"{f.origin_dest}, ETA/ETD {clock(f.earliest)}{when}", t, {"type": "focus_flight", "ref": f.callsign})
+                         f"{f.callsign} {'emergency' if f.priority == 'emergency' else 'priority'} · {f.aircraft} {'from' if f.kind == 'ARR' else 'to'} {f.origin_dest}",
+                         when + (f" ({row['added']} min later than ETA)" if planned and row["added"] else "") + ".", t,
+                         {"type": "focus_flight", "ref": f.callsign},
+                         _impact(ctx, [f.callsign], [row["runway"]] if planned else [], [row["stand"]] if planned and row["stand"] else []))
                 keys.add(k)
             if not f.code_known:
                 k = f"flt:type:{f.callsign}"
@@ -462,7 +522,7 @@ class Engine:
                 cores[p.id] = core
             rec = min(options, key=_rank)["id"] if options else None
             result = {"id": next(self._gen), "t": ctx.now, "auto": auto, "valid": list(cores), "stale": False,
-                      "situation": situation(ctx, cur_conf),
+                      "situation": situation(ctx, cur_conf), "impact": situation_impact(ctx, rows, cur_conf),
                       "current": {"kpis": cur_k, "conflicts": cur_conf},
                       "baseline": {"kpis": b_k, "conflicts": b_conf, "plan": b_rows, "changes": explain_changes(b_rows, rows, ctx)},
                       "options": options, "recommended": rec, "frozen": sorted(frozen), "assumptions": ctx.assumptions}
@@ -478,10 +538,13 @@ class Engine:
                 best = next(o for o in options if o["id"] == rec)
                 db = round(b_k["avg_delay"] - best["kpis"]["avg_delay"], 1)
                 self.notes.raise_("plan:ready", "warning" if cur_k["critical"] else "info", "plan",
-                                  f"Recovery plan ready: {best['label']} ({len(best['changes'])} changes)",
-                                  f"{best['summary']} vs rule-based: {'-' if db >= 0 else '+'}{abs(db)} min avg delay, "
-                                  f"{best['kpis']['unserved']} vs {b_k['unserved']} flights diverted or without a slot.",
-                                  self.state.now, {"type": "review_plan"})
+                                  f"Recovery plan ready: {best['label']}",
+                                  f"{len(best['changes'])} flights change · avg delay {best['kpis']['avg_delay']} min "
+                                  f"({'-' if db >= 0 else '+'}{abs(db)} vs rule-based) · {best['kpis']['unserved']} without a slot.",
+                                  self.state.now, {"type": "review_plan"},
+                                  _impact(ctx, [c["callsign"] for c in best["changes"]],
+                                          {c["runway"] for c in best["changes"] if c["runway"]},
+                                          {c["stand"] for c in best["changes"] if c["stand"]}))
                 self._log("engine", "info", f"Recovery options generated{' automatically' if auto else ''}: "
                           + ", ".join(f"{o['label']} ({o['kpis']['avg_delay']} min avg)" for o in options) + ".")
             else:

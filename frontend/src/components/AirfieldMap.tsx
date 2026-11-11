@@ -1,10 +1,12 @@
 import { memo, useMemo, type ReactNode } from "react";
 import type { Layout, PlanOption, Snapshot } from "../types";
-import { position, type AcPos } from "../sim";
+import { position } from "../sim";
+import type { Ac } from "../traffic";
 
 interface Props {
   layout: Layout;
   snap: Snapshot;
+  traffic: Map<string, Ac>;
   T: number;
   selected: string | null;
   onSelect: (cs: string | null) => void;
@@ -15,36 +17,29 @@ interface Props {
 const SCALE: Record<string, number> = { C: 0.78, D: 0.9, E: 1, F: 1.18 };
 const AC_PATH = "M11 0 L7 -1.6 L1.5 -1.6 L-3 -9.5 L-5.5 -9.5 L-2.6 -1.6 L-7.5 -1.4 L-9.6 -4.6 L-11 -4.6 L-10 0 L-11 4.6 L-9.6 4.6 L-7.5 1.4 L-2.6 1.6 L-5.5 9.5 L-3 9.5 L1.5 1.6 L7 1.6 Z";
 
-export function AirfieldMap({ layout, snap, T, selected, onSelect, proposal, toolbar }: Props) {
+export function AirfieldMap({ layout, snap, traffic, T, selected, onSelect, proposal, toolbar }: Props) {
   const conflictStands = useMemo(() => new Set(snap.conflicts.filter((c) => c.type.startsWith("stand")).map((c) => c.resource)), [snap.conflicts]);
   const conflictRwys = useMemo(() => new Set(snap.conflicts.filter((c) => ["separation", "runway"].includes(c.type)).map((c) => c.resource)), [snap.conflicts]);
   const conflictFlights = useMemo(() => new Set(snap.conflicts.filter((c) => c.type !== "unplanned").flatMap((c) => c.flights)), [snap.conflicts]);
 
-  const positions = useMemo(() => {
-    const out: { cs: string; pos: AcPos }[] = [];
-    for (const row of Object.values(snap.plan)) {
-      const f = snap.flights[row.callsign];
-      const pos = position(row, T, layout, f?.aldt, f?.aobt, f?.atot);
-      if (pos.visible) out.push({ cs: row.callsign, pos });
-    }
-    return out;
-  }, [snap.plan, snap.flights, T, layout]);
+  const positions = useMemo(() => [...traffic.values()].filter((ac) => ac.surf).map((ac) => ({ ac, cs: ac.cs, pos: ac.surf! })), [traffic]);
 
+  // Stands with an aircraft on them, by where it is physically parked
   const parked = useMemo(() => {
     const m = new Set<string>();
-    for (const { cs, pos } of positions) {
-      const r = snap.plan[cs];
-      if (!pos.moving && (pos.phase === "ON BLOCK" || pos.phase === "ON STAND") && r.stand) m.add(r.stand);
+    for (const { ac, pos } of positions) {
+      const stand = ac.f.act_stand ?? ac.row?.stand ?? ac.f.stand;
+      if (!pos.moving && (pos.phase === "ON BLOCK" || pos.phase === "ON STAND") && stand) m.add(stand);
     }
     return m;
-  }, [positions, snap.plan]);
+  }, [positions]);
 
   const ops = snap.ops;
   const closedStands = snap.world.stands;
   const closedTwy = new Set(Object.keys(snap.world.taxiways));
   const vb = layout.viewBox;
   const hf = layout.holding_fix;
-  const holding = positions.filter((p) => p.pos.phase === "HOLDING").map((p) => p.cs);
+  const holding = positions.filter((p) => p.ac.phase === "HOLDING").map((p) => p.cs);
 
   return (
     <div className="mapwrap">
@@ -150,13 +145,13 @@ export function AirfieldMap({ layout, snap, T, selected, onSelect, proposal, too
         )}
 
         {/* Aircraft */}
-        {positions.map(({ cs, pos }) => {
-          const row = snap.plan[cs];
+        {positions.map(({ ac, cs, pos }) => {
+          const { row, f } = ac;
           const isSel = selected === cs;
           const isParked = !pos.moving && (pos.phase === "ON BLOCK" || pos.phase === "ON STAND");
-          const color = row.priority === "emergency" ? "var(--crit)" : pos.phase === "HOLDING" || pos.phase === "WAIT STAND" ? "var(--warn)"
+          const color = f.priority === "emergency" ? "var(--crit)" : pos.phase === "HOLDING" || pos.phase === "WAIT STAND" || !row ? "var(--warn)"
             : conflictFlights.has(cs) ? "#ff8a80" : isParked ? "#8d98a5" : "#e8edf2";
-          const sc = SCALE[row.code] ?? 1;
+          const sc = SCALE[f.code] ?? 1;
           const showLabel = isSel || (!isParked && pos.phase !== "HOLDING");
           return (
             <g key={cs} onClick={(e) => { e.stopPropagation(); onSelect(isSel ? null : cs); }} style={{ cursor: "pointer" }}>
@@ -168,9 +163,10 @@ export function AirfieldMap({ layout, snap, T, selected, onSelect, proposal, too
                 <g>
                   <line x1={pos.x + 6} y1={pos.y - 6} x2={pos.x + 14} y2={pos.y - 14} stroke="#7d8894" strokeWidth="0.8" />
                   <text className="ac-label" x={pos.x + 16} y={pos.y - 24}>
-                    <tspan fontWeight={600} fill={row.priority === "emergency" ? "var(--crit)" : undefined}>{cs}</tspan>
+                    <tspan fontWeight={600} fill={f.priority === "emergency" ? "var(--crit)" : undefined}>{cs}</tspan>
                     <tspan className="sub" x={pos.x + 16} dy={11}>
-                      {row.type} {row.kind === "ARR" ? `→${row.stand ?? "--"}` : row.runway}{row.added > 0 ? ` +${row.added}` : ""}
+                      {f.aircraft} {!row ? "NO PLAN" : row.kind === "ARR" ? `→${row.stand ?? "--"}` : row.runway}
+                      {pos.phase === "WAIT STAND" ? " WAIT" : ""}{row && row.added > 0 ? ` +${row.added}` : ""}
                     </tspan>
                   </text>
                 </g>
