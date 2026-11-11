@@ -25,6 +25,52 @@ for the model, its known limits and the questions we expect.
 Traffic in the demo is **simulated**. Runway, stand and weather rules are planning assumptions from
 public guidance, not certified values.
 
+## Screenshots
+
+Captured from a full demo run of the **Radiation fog (dawn)** scenario on the current build (simulated traffic, OMDB).
+
+**Operations view.** Flight strips, the 40 NM airspace view (schematic), the stand timeline and alerts on one screen.
+![Operations view with airspace radar](docs/screenshots/01-operations-airspace.png)
+
+**Airport surface (`M`).** Runways in use, taxiways and stand occupancy.
+![Airport surface view](docs/screenshots/02-surface-view.png)
+
+**Fog arrives.** METAR drops to 3000 m BR (IMC). The approved plan is re-validated: 20 open issues (15 critical) and a decision is requested.
+![Alerts after fog: new operating conditions](docs/screenshots/03-fog-alerts.png)
+
+**Forecast.** Movements per 15 min against capacity (LVP from the TAF) and predicted delay for the next 6 hours.
+![Six-hour demand vs capacity forecast](docs/screenshots/04-forecast.png)
+
+**Recovery options (`R`).** Minimum delay, Balanced (recommended) and Minimum change, with reasons for every change and a TAF stress test.
+![Review and approve recovery options](docs/screenshots/05-recovery-options.png)
+
+**Full comparison (`C`).** Rule-based (first-come, first-served) vs FalconAero under the same rules.
+![Full comparison against the rule-based plan](docs/screenshots/06-full-comparison.png)
+
+**Approved (`A`).** The plan is logged and can be undone. The outlook keeps watching the forecast.
+![Approved recovery plan with outlook](docs/screenshots/07-plan-approved.png)
+
+**Notifications (`N`).** Raised, updated and auto-resolved by the engine.
+![Notifications tab](docs/screenshots/08-notifications.png)
+
+**Scenario Studio.** 23 scenarios modelled on real events, plus a weather composer, event builder, traffic generator and chaos mode.
+![Scenario Studio](docs/screenshots/09-scenario-studio.png)
+
+### Measured in the fog scenario (Balanced plan vs rule-based, same rules)
+
+| Metric | Rule-based | FalconAero | Change |
+|---|---:|---:|---:|
+| Average delay of served flights | 4.2 min | 3.2 min | −1.0 min (−24%) |
+| Total delay | 191 min | 145 min | −46 min |
+| Worst single delay | 19 min | 15 min | −4 min |
+| Flights delayed 15 min or more | 3 | 1 | −2 |
+| Average arrival holding | 5.3 min | 4.0 min | −1.3 min |
+| Critical issues / diverted | 0 / 0 | 0 / 0 | same |
+
+The unrevised plan had 15 critical issues once the fog arrived. The plan was solved in 3.1 s and stress-tested against the TAF LVP2 worst case. The traffic is simulated, so these numbers are not measurements of live airport operations.
+
+The pitch deck is in [`pitch/`](pitch/) (PDF for upload, PPTX with speaker notes).
+
 ## Run it (Windows)
 
 ```bash
