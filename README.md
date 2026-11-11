@@ -35,13 +35,13 @@ Captured from a full demo run of the **Radiation fog (dawn)** scenario on the cu
 **Airport surface (`M`).** Runways in use, taxiways and stand occupancy.
 ![Airport surface view](docs/screenshots/02-surface-view.png)
 
-**Fog arrives.** METAR drops to 3000 m BR (IMC). The approved plan is re-validated: 20 open issues (15 critical) and a decision is requested.
+**Fog arrives.** METAR drops to 3000 m BR (IMC). The approved plan is re-validated: 21 open issues (16 critical) and a decision is requested.
 ![Alerts after fog: new operating conditions](docs/screenshots/03-fog-alerts.png)
 
 **Forecast.** Movements per 15 min against capacity (LVP from the TAF) and predicted delay for the next 6 hours.
 ![Six-hour demand vs capacity forecast](docs/screenshots/04-forecast.png)
 
-**Recovery options (`R`).** Minimum delay, Balanced (recommended) and Minimum change, with reasons for every change and a TAF stress test.
+**Recovery options (`R`).** A pop-up that stays until the controller approves or ignores it: aircraft, runways and stands affected, then Minimum delay, Balanced and Minimum change with the recommended one marked, reasons for every change and a TAF stress test.
 ![Review and approve recovery options](docs/screenshots/05-recovery-options.png)
 
 **Full comparison (`C`).** Rule-based (first-come, first-served) vs FalconAero under the same rules.
@@ -50,24 +50,26 @@ Captured from a full demo run of the **Radiation fog (dawn)** scenario on the cu
 **Approved (`A`).** The plan is logged and can be undone. The outlook keeps watching the forecast.
 ![Approved recovery plan with outlook](docs/screenshots/07-plan-approved.png)
 
-**Notifications (`N`).** Raised, updated and auto-resolved by the engine.
+**Notifications (`N`).** Raised, updated and auto-resolved by the engine, each with the flights, runways and stands it affects.
 ![Notifications tab](docs/screenshots/08-notifications.png)
 
 **Scenario Studio.** 23 scenarios modelled on real events, plus a weather composer, event builder, traffic generator and chaos mode.
 ![Scenario Studio](docs/screenshots/09-scenario-studio.png)
 
-### Measured in the fog scenario (Balanced plan vs rule-based, same rules)
+### Measured in the fog scenario (Balanced plan vs rule-based, same rules, 6 runs)
 
-| Metric | Rule-based | FalconAero | Change |
-|---|---:|---:|---:|
-| Average delay of served flights | 4.2 min | 3.2 min | −1.0 min (−24%) |
-| Total delay | 191 min | 145 min | −46 min |
-| Worst single delay | 19 min | 15 min | −4 min |
-| Flights delayed 15 min or more | 3 | 1 | −2 |
-| Average arrival holding | 5.3 min | 4.0 min | −1.3 min |
-| Critical issues / diverted | 0 / 0 | 0 / 0 | same |
+Each run starts the same way: 04:00Z with the clock paused, fog injected, one simulated minute, then recovery options ([`video/measure.py`](video/measure.py)).
 
-The unrevised plan had 15 critical issues once the fog arrived. The plan was solved in 3.1 s and stress-tested against the TAF LVP2 worst case. The traffic is simulated, so these numbers are not measurements of live airport operations.
+| Metric | Rule-based (range over 6 runs) | FalconAero Balanced (every run) |
+|---|---:|---:|
+| Flights without a slot | 0 to 1 (1 in 2 runs) | 0 |
+| Average delay of served flights | 2.3 to 7.9 min | 2.7 min |
+| Total delay | 105 to 365 min | 122 min |
+| Worst single delay | 11 to 40 min | 13 min |
+| Flights delayed 15 min or more | 0 to 9 | 0 |
+| Critical issues / diverted | 0 / 0 | 0 / 0 |
+
+FalconAero's plan was identical in all six runs. The rule-based plan moves because it starts from the pre-fog allocation, which routine upkeep's time-limited solver produces slightly differently each run. In the two runs where its average delay was lower, it had left a flight without a slot, and average delay only counts served flights. The unrevised plan had 15 to 17 critical issues once the fog arrived. Each option solved in 3.0 s or less and was stress-tested against the TAF LVP2 worst case. The traffic is simulated, so these numbers are not measurements of live airport operations.
 
 The pitch deck is in [`pitch/`](pitch/) (PDF for upload, PPTX with speaker notes).
 

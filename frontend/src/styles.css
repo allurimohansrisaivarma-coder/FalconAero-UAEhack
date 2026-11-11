@@ -202,7 +202,8 @@ button { font: inherit; color: inherit; }
 .strip .cs { font: 600 13.5px/1.2 var(--mono); letter-spacing: 0.02em; }
 .strip .typ { font: 500 11.5px/1 var(--mono); color: var(--text-2); }
 .strip .od { font: 500 11.5px/1 var(--mono); color: var(--text-3); }
-.strip .l2 { display: flex; gap: 10px; margin-top: 4px; font: 500 11.5px/1 var(--mono); color: var(--text-2); }
+.strip .l2 { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 4px; font: 500 11.5px/1 var(--mono); color: var(--text-2); }
+.strip .l2 > span { white-space: nowrap; }   /* an extra tag (WAIT, TOBT) moves to the next line whole, never splits "RWY 12L" */
 .strip .l2 b { font-weight: 600; color: var(--text); }
 .strip .side { padding: 6px 8px; display: grid; grid-template-columns: auto auto; grid-template-rows: auto auto; gap: 4px 6px; align-items: baseline; justify-items: end; border-left: 1px solid var(--line); min-width: 96px; }
 .strip .side .time { grid-column: 1 / 3; }
