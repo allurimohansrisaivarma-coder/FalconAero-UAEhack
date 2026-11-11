@@ -1,0 +1,12 @@
+[
+  {"id": "intro", "text": "This is FalconAero, an operations control system for Dubai International. On the left, the flight strips. In the centre, live traffic on the forty nautical mile radar, and on the airfield surface. On the right, the alerts, and the decisions waiting for the duty manager."},
+  {"id": "normal", "text": "In normal conditions, routine upkeep allocates runways and stands on its own, within limits the controller sets. Nothing large ever changes without approval."},
+  {"id": "fog_onset", "text": "Situation one. Radiation fog at dawn. Visibility collapses, and low visibility procedures come into force. Arrival spacing widens, taxiing slows down, and the forecast shows holding starting to build."},
+  {"id": "fog_plan", "text": "Fog is a new operating condition, so the engine does not quietly re-sequence the traffic. Instead, a recovery plan pops up. It shows how many aircraft, runways and stands are affected, and compares the options side by side."},
+  {"id": "fog_approve", "text": "The recommended option has no critical issues. The duty manager approves it, and the new sequence goes to the tower and to stand planning. The radar and the surface view update together."},
+  {"id": "emerg_onset", "text": "Situation two. A full emergency. An inbound aircraft reports an engine fire. Its strip turns red, and the engine looks for the first safe landing slot, whatever it costs the other flights."},
+  {"id": "emerg_plan", "text": "The pop-up stays on screen until a decision is made. It counts the arrivals and departures affected, the runway being protected, and the stands that change. The warning can be ignored, but that choice is logged."},
+  {"id": "emerg_approve", "text": "The controller approves. The emergency lands first, the other flights are re-timed, and every change is explained, flight by flight."},
+  {"id": "notifications", "text": "Notifications sum up each hazard by what it touches: the number of flights, the runways and the stands, with one clear action to take."},
+  {"id": "outro", "text": "FalconAero. Decision support for airport operations, with the controller always in command."}
+]

@@ -205,7 +205,9 @@ class Engine:
         for_controller = (bool(crit) and not upkeep) or (routine and not upkeep)
         self.decision = None
         if not for_controller:
-            if self.options:
+            # Withdraw only once the approved plan has no critical issue left; while upkeep is still
+            # trying to settle one, the options the controller is reading stay on offer
+            if self.options and not crit:
                 # Nothing left to decide: withdraw the proposal instead of leaving it pending
                 self.options, self._option_cores = None, {}
                 self.notes.resolve("plan:ready", self.state.now, "No longer needed: approved plan is conflict-free")
