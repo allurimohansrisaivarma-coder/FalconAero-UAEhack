@@ -71,7 +71,7 @@ Each run starts the same way: 04:00Z with the clock paused, fog injected, one si
 
 FalconAero's plan was identical in all six runs. The rule-based plan moves because it starts from the pre-fog allocation, which routine upkeep's time-limited solver produces slightly differently each run. In the two runs where its average delay was lower, it had left a flight without a slot, and average delay only counts served flights. The unrevised plan had 15 to 17 critical issues once the fog arrived. Each option solved in 3.0 s or less and was stress-tested against the TAF LVP2 worst case. The traffic is simulated, so these numbers are not measurements of live airport operations.
 
-The pitch deck is in [`pitch/`](pitch/) (PDF for upload, PPTX with speaker notes).
+The pitch deck is in [`pitch/`](pitch/) (PDF for upload, PPTX with speaker notes). The 2-minute demo video, fog and full-emergency scenarios with their approvals, is [`Falconaero_demo.mp4`](Falconaero_demo.mp4).
 
 ## Run it (Windows)
 
